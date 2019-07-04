@@ -1,5 +1,9 @@
 module Main where
 
+import Control.Error.Util (hoistMaybe)
+import Control.Monad.Trans.Class (lift)
+import Control.Monad.Trans.Maybe (MaybeT,runMaybeT)
+import Control.Monad.Trans.Reader (Reader,ask,runReader)
 import Data.List (lookup)
 
 data Val = Zero | One
@@ -21,11 +25,13 @@ evalV :: Val -> Double
 evalV Zero = 0
 evalV One  = 1
 
-eval :: [(String,Exp)] -> Exp -> Maybe Double
-eval _ (Con v)     = Just $ evalV v
-eval m (Var x)     = lookup x m >>= \e -> eval m e
-eval m (Add e1 e2) = (+) <$> eval m e1 <*> eval m e2
-eval m (Mul e1 e2) = (*) <$> eval m e1 <*> eval m e2
+type VarMap = [(String,Exp)]
+
+eval :: Exp -> MaybeT (Reader VarMap) Double
+eval (Con v)     = pure (evalV v)
+eval (Var x)     = lift ask >>= \m -> hoistMaybe (lookup x m) >>= \e -> eval e
+eval (Add e1 e2) = (+) <$> eval e1 <*> eval e2
+eval (Mul e1 e2) = (*) <$> eval e1 <*> eval e2
 
 x_ = Var "x"
 y_ = Var "y"
@@ -42,6 +48,6 @@ main = do
   print (diff "y" test)
 
   let m = [("x",Con One),("y",Con One)]
-  print (eval m test)
-  print (eval m (diff "x" test))
-  print (eval m (diff "y" test))
+  print (runReader (runMaybeT (eval test)) m)
+  print (runReader (runMaybeT (eval (diff "x" test))) m)
+  print (runReader (runMaybeT (eval (diff "y" test))) m)

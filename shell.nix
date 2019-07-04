@@ -20,6 +20,7 @@ let
     accelerate
     accelerate-llvm
     accelerate-llvm-native
+    errors
   ]);
 in
 
