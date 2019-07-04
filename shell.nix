@@ -13,11 +13,13 @@ let
         llvm-config = pkgs.llvm_8;
       };
       llvm-hs-pure = super.llvm-hs-pure_8_0_0;
+      accelerate-llvm-native = haskell.lib.dontCheck super.accelerate-llvm-native;
     };
   };
   hsenv = newHaskellPackages.ghcWithPackages (p: with p; [
-    accelerate-llvm
     accelerate
+    accelerate-llvm
+    accelerate-llvm-native
   ]);
 in
 
