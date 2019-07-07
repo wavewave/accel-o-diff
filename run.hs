@@ -1,4 +1,9 @@
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE TypeSynonymInstances #-}
+
+-- automatic differentiation reformulated in terms of CPS transformation
+
 module Main where
 
 import Control.Error.Util (hoistMaybe,nothing)
@@ -6,6 +11,7 @@ import Control.Monad.Reader.Class (ask,local)
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Maybe (MaybeT(runMaybeT))
 import Control.Monad.Trans.Reader (Reader,runReader)
+import Data.Bifunctor (first)
 import Data.Hashable
 import Data.List (lookup,nub)
 import GHC.Generics (Generic)
@@ -36,9 +42,12 @@ instance Hashable Exp
 add e1 e2 = App (App (Lam "x1" (Lam "x2" (Prm (Add (Var "x1") (Var "x2"))))) e1) e2
 mul e1 e2 = App (App (Lam "y1" (Lam "y2" (Prm (Mul (Var "y1") (Var "y2"))))) e1) e2
 
--- data DPrim = DVar Id
+-- data DVar = DVar Id
 
--- type DExp = [ (Exp, DPrim) ]
+-- type DPrim = (Prim,DVar)
+
+data DExp = Fwd Exp      -- forward  (non-lambda): ready for application
+          | Bwd Id  DExp -- backward (lambda: (\y -> e(y)) dx): Id should be bound
 
 
 class PrettyPrint a where
@@ -60,18 +69,48 @@ instance PrettyPrint Exp where
   pprint (Lam x e) = "(\\" ++ x ++ " -> " ++ pprint e ++ ")"
   pprint (App e1 e2) = "(" ++ pprint e1 ++ " " ++ pprint e2 ++ ")"
 
+-- instance PrettyPrint DVar where
+--   pprint (DVar x) = "d" ++ x
+
+-- instance PrettyPrint DPrim where
+--   pprint (p,dp) = "(" ++ pprint p ++ ") " ++ pprint dp
+
+-- instance PrettyPrint DExp where
+--   pprint (e,dp) = "(" ++ pprint e ++ ") " ++ pprint dp
 
 diffP :: Id -> Prim -> Prim
 diffP _ (Con _)     = Con Zero
 diffP x (Var y)     = if x == y then Con One else Con Zero
-diffP x (Add p1 p2) = Add (diffP x p1) (diffP x p2)
-diffP x (Mul p1 p2) = Mul (diffP x p1) p2 `Add` Mul p1 (diffP x p2) -- Leibniz rule
+diffP x (Add p1 p2) = diffP x p1 `Add` diffP x p2
+diffP x (Mul p1 p2) = (diffP x p1 `Mul` p2) `Add` (p1 `Mul` diffP x p2) -- Leibniz rule
+--  map (first (\p -> Mul p p2)) (diffP x p1)
+--                      ++ map (first (\p -> Mul p1 p)) (diffP x p2)
 
-diff :: Id -> Exp -> Exp
-diff x (Prm p)     = Prm (diffP x p)
-diff x (Lam y  e ) = Lam y (diff y e)
-diff x (App e1 e2) = let e1' = diff x e1
-                     in App e1' e2 `mul` diff x e2 -- chain rule
+{-
+toFwd f = uncurry Fwd . first f
+-}
+
+toLam :: Id -> DExp -> DExp
+toLam y (F e)    = F (Lam y e) dx
+toLam y (B z de) = B z (toLam y de)
+
+
+toApp ex (F e)          = F (App e ex)
+toApp ex (B y (F e))    = F (App (Lam y e) ex `mul` diff x ex)
+toApp ex (B y (B z de)) =
+  let e = undefined
+  in B z (App (Lam y e) ex `mul` diff x ex
+
+
+
+diff :: Id -> Exp -> [DExp]
+diff x (Prm p)     = [Fwd (Prm (diffP x p))] -- (Prm (diffP x p), DVar x)
+diff x (Lam y  e ) = map (Bwd y) (diff y e) ++ map (toLam y) (diff x e)
+diff x (App e1 e2) =
+  let de1's = diff x e1
+  in concatMap (toApp e2) de1s
+
+     case e1'                   in App e1' e2 `mul` diff x e2 -- chain rule
 
 
 evalV :: Val -> Double
@@ -85,17 +124,31 @@ z_ = Prm (Var "z")
 
 
 t_exp1 = x_ `add` y_
-t_dexp1 = diff "x" t_exp1
+-- t_dexp1 = diff "x" t_exp1
+
+t_prim1 = Var "x" `Add` Var "y"
+t_dprim1 = diffP "x" t_prim1
+t_prim2 = Var "x" `Mul` Var "y"
+t_dprim2 = diffP "y" t_prim2
 
 main :: IO ()
 main = do
   putStrLn "test"
 
+  putStrLn (pprint t_prim1)
+  mapM_ (putStrLn . pprint) t_dprim1
+
+  putStrLn (pprint t_prim2)
+  mapM_ (putStrLn . pprint) t_dprim2
+
+{-
   print t_exp1
   putStrLn (pprint t_exp1)
 
   print t_dexp1
   putStrLn (pprint t_dexp1)
+-}
+
 
 {-
 type VarMap = [(Id,Exp)]
